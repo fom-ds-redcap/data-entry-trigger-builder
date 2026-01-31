@@ -7,6 +7,7 @@ require_once "vendor/autoload.php";
 use Dompdf\Dompdf;
 use REDCap;
 use Project;
+use DateTime;
 
 class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
 {
@@ -112,6 +113,23 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         return $parts;
     }
     
+    /**
+     * Returns the number of minutes it's been since the last time an email was sent
+     */
+    private function get_last_send_time()
+    {
+        $last_send_timestamp = $this->getSystemSetting("email_last_sent_timestamp");
+        
+        if(is_null($last_send_timestamp)) 
+        { 
+            return $this->getSystemSetting("det-error-check-frequency"); 
+        }
+        
+        $date_time = new DateTime($last_send_timestamp);
+        $diff = $date_time->diff(new DateTime());
+        return $diff->i;
+    }
+
     /**
      * Checks whether a field exists within a project.
      *
@@ -454,6 +472,139 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         }
         return FALSE;
     }
+
+    public function get_det_errors($triggers)
+    {
+        $errors = [];
+
+        /**
+         * Process each trigger, and check if variables all exist in the data dictionary
+         */
+        foreach($triggers as $index => $trigger_obj)
+        {
+            $dest_project_pid = $trigger_obj["dest-project"];
+
+            $err = $this->validateSyntax($trigger_obj["trigger"]);
+            if (!empty($err))
+            {
+                $errors[$index]["trigger_errors"] = $err;
+            }
+
+            if (!empty($trigger_obj["linkSourceEvent"]) && !$this->isValidEvent($trigger_obj["linkSourceEvent"]))
+            {
+                $errors[$index]["linkSourceEvent"] = "Invalid event!";
+            }
+
+            if (!$this->isValidField($trigger_obj["linkSource"]))
+            {
+                $errors[$index]["linkSource"] = "Invalid field!";
+            }
+
+            if (!empty($trigger_obj["linkDestEvent"]) && !$this->isValidEvent($trigger_obj["linkDestEvent"], $dest_project_pid)) 
+            {
+                $errors[$index]["linkDestEvent"] = "Invalid event!";
+            }
+
+            if (!$this->isValidField($trigger_obj["linkDest"], $dest_project_pid)) 
+            {
+                $errors[$index]["linkDest"] = "Invalid field!";
+            }
+
+            foreach($trigger_obj["pipingSourceEvents"] as $n => $field)
+            {
+                if(!$this->isValidEvent($field))
+                {
+                    $errors[$index]["pipingSourceEvents"][$n] = "$field is an invalid event!";
+                }
+            }
+
+            foreach($trigger_obj["pipingSourceFields"] as $n => $field)
+            {
+                if(!$this->isValidField($field))
+                {
+                    $errors[$index]["pipingSourceFields"][$n] = "$field is an invalid field!";
+                }
+            }
+
+            foreach($trigger_obj["pipingDestEvents"] as $n => $field)
+            {
+                if(!$this->isValidEvent($field, $dest_project_pid))
+                {
+                    $errors[$index]["pipingDestEvents"][$n] = "$field is an invalid event!";
+                }
+            }
+
+            foreach($trigger_obj["pipingDestFields"] as $n => $field)
+            {
+                if(!$this->isValidField($field, $dest_project_pid))
+                {
+                    $errors[$index]["pipingDestFields"][$n] = "$field is an invalid field!";
+                }
+            }
+
+            foreach($trigger_obj["setDestEvents"] as $n => $field)
+            {
+                if(!$this->isValidEvent($field, $dest_project_pid))
+                {
+                    $errors[$index]["setDestEvents"][$n] = "$field is an invalid event!";
+                }
+            }
+
+            foreach($trigger_obj["setDestFields"] as $n => $field)
+            {
+                if(!$this->isValidField($field, $dest_project_pid))
+                {
+                    $errors[$index]["setDestFields"][$n] = "$field is an invalid field!";
+                }
+            }
+
+            foreach($trigger_obj["sourceInstrEvents"] as $n => $field)
+            {
+                if(!$this->isValidEvent($field))
+                {
+                    $errors[$index]["sourceInstrEvents"][$n] = "$field is an invalid event!";
+                }
+            }
+
+            foreach($trigger_obj["sourceInstr"] as $n => $field)
+            {
+                if(!$this->isValidInstrument($field))
+                {
+                    $errors[$index]["sourceInstr"][$n] = "$field is an invalid instrument!";
+                }
+            }
+
+            foreach($trigger_obj["destInstrEvents"] as $n => $field)
+            {
+                if(!$this->isValidEvent($field, $dest_project_pid))
+                {
+                    $errors[$index]["destInstrEvents"][$n] = "$field is an invalid event!";
+                }
+            }
+
+            if (!empty($trigger_obj["surveyUrlEvent"]) && !$this->isValidEvent($trigger_obj["surveyUrlEvent"], $dest_project_pid))
+            {
+                $errors[$index]["surveyUrlEvent"] = "Invalid event!";
+            }
+
+            if (!empty($trigger_obj["surveyUrl"]) && !$this->isValidInstrument($trigger_obj["surveyUrl"], $dest_project_pid))
+            {
+                $errors[$index]["surveyUrl"] = "Invalid instrument!";
+            }
+
+            if (!empty($trigger_obj["saveUrlEvent"]) && !$this->isValidEvent($trigger_obj["saveUrlEvent"])) 
+            {
+                $errors[$index]["saveUrlEvent"] = "Invalid event!";
+            }
+
+            if (!empty($trigger_obj["saveUrlField"]) && !$this->isValidField($trigger_obj["saveUrlField"])) 
+            {
+                $errors[$index]["saveUrlField"] = "Invalid field!";
+            }
+        }
+
+        return $errors;
+    }
     
     /**
      * REDCap hook is called immediately after a record is saved. Will retrieve the DET settings,
@@ -489,6 +640,34 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
             else {
                 $this->log("DET Builder: Invalid json detected in existing settings");
                 return;
+            }
+            
+            // Send email if errors are present in DET
+            $errors = $this->get_det_errors($triggers);
+            
+            if (!empty($errors))
+            {
+                $system_from_email = $this->getSystemSetting("system-from-email");
+                $system_contact_email = $this->getSystemSetting("system-contact-email");
+                $frequency = $this->getSystemSetting("det-error-check-frequency");
+                
+                $subject = "Data Entry Trigger Builder Errors in Project $project_id";
+                $html_body = "<p>Errors have been detected in the Data Entry Trigger Builder external module for <b>PID $project_id</b>. Please fix this as soon as possible, otherwise the DET will not run properly.</p><p><a href='" . $this->getUrl("form.php") . "'>Click to Navigate to Project EM Page</a></p>";
+                
+                $last_send_time = $this->get_last_send_time();
+                
+                if ($system_from_email && $system_contact_email && intval($last_send_time) >= intval($frequency))
+                {
+                    $email = new \Message();
+                    $email->setFrom($system_from_email);
+                    $email->setTo($system_contact_email);
+                    $email->setSubject($subject);
+                    $email->setBody($html_body, true);
+                    $email->send();
+                    
+                    $date_time = new DateTime();
+                    $this->setSystemSetting("email_last_sent_timestamp", $date_time->format("Y-m-d H:i:s"));
+                }
             }
             
             // Get current record data

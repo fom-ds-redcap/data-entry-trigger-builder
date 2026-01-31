@@ -13,14 +13,36 @@
         "project": [
             {
                 "name": "Data Entry Trigger Builder",
-                "url": "index.php",
+                "url": "form.php",
                 "icon": "fas fa-wrench"
             }
         ]
     },
+    "system-settings": [
+        {
+            "key": "system-from-email",
+            "name": "System From Email",
+            "required": true,
+            "type": "text",
+            "repeatable": false
+        },
+        {
+            "key": "system-contact-email",
+            "name": "System Contact Email",
+            "required": true,
+            "type": "text",
+            "repeatable": false
+        },
+        {
+            "key": "det-error-check-frequency",
+            "name": "Frequency to check for errors in a project's DET (in minutes)",
+            "required": true,
+            "type": "text"
+        }
+    ],
     "framework-version": 14,
     "compatibility": {
         "redcap-version-min": "13.7.11",
         "php-version-min": "8.2.0"
-     }
+    }
 }
