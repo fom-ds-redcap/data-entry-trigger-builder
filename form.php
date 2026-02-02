@@ -239,7 +239,7 @@ if (!$settings)
                         $title = htmlspecialchars($trigger_obj["title"], ENT_QUOTES); 
                     ?>
                     <div class="form-group trigger-and-data-wrapper">
-                        <div class="det-trigger">
+                        <div>
                             <div class="row">
                                 <div class="col-sm-2">
                                     <label><h6>Title</h6></label>
@@ -250,6 +250,8 @@ if (!$settings)
                                 </div>
                             </div>
                             <textarea rows="1" name="triggers[<?php print $index;?>][title]" class="form-control form-group" placeholder="Give your trigger an optional title..."><?php print str_replace("\"", "'", $title); ?></textarea>
+                        </div>
+                        <div class="det-trigger">
                             <div class="row">
                                 <div class="col-sm-2">
                                     <label><h6>Trigger: #<?php print $index+1; ?></h6></label>
