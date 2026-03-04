@@ -652,7 +652,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                 $frequency = $this->getSystemSetting("det-error-check-frequency");
                 
                 $subject = "Data Entry Trigger Builder Errors in Project $project_id";
-                $html_body = "<p>Errors have been detected in the Data Entry Trigger Builder external module for <b>PID $project_id</b>. Please fix this as soon as possible, otherwise the DET will not run properly.</p><p><a href='" . $this->getUrl("form.php") . "'>Click to Navigate to Project EM Page</a></p>";
+                $html_body = "<p>Errors have been detected in the Data Entry Trigger Builder external module for <b>PID $project_id</b>. Please fix this as soon as possible, otherwise the DET will not run properly.</p><p><a href='" . $this->getUrl("form.php") . "'>Click to Navigate to Project EM Page</a></p><p>The last person to edit the DET was <b>" . $this->getProjectSetting("saved_by"). "</b></p>";
                 
                 $last_send_time = $this->get_last_send_time();
                 
