@@ -118,7 +118,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
      */
     private function get_last_send_time()
     {
-        $last_send_timestamp = $this->getSystemSetting("email_last_sent_timestamp");
+        $last_send_timestamp = $this->getProjectSetting("email_last_sent_timestamp");
         
         if(is_null($last_send_timestamp)) 
         { 
@@ -666,7 +666,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $email->send();
                     
                     $date_time = new DateTime();
-                    $this->setSystemSetting("email_last_sent_timestamp", $date_time->format("Y-m-d H:i:s"));
+                    $this->setProjectSetting("email_last_sent_timestamp" , $date_time->format("Y-m-d H:i:s"));
                 }
             }
             
