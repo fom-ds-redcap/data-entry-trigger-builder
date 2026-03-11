@@ -116,7 +116,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
     /**
      * Returns the number of minutes it's been since the last time an email was sent
      */
-    private function get_last_send_time()
+    private function get_last_sent_diff()
     {
         $last_send_timestamp = $this->getProjectSetting("email_last_sent_timestamp");
         
@@ -642,34 +642,6 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                 return;
             }
             
-            // Send email if errors are present in DET
-            $errors = $this->get_det_errors($triggers);
-            
-            if (!empty($errors))
-            {
-                $system_from_email = $this->getSystemSetting("system-from-email");
-                $system_contact_email = $this->getSystemSetting("system-contact-email");
-                $frequency = $this->getSystemSetting("det-error-check-frequency");
-                
-                $subject = "Data Entry Trigger Builder Errors in Project $project_id";
-                $html_body = "<p>Errors have been detected in the Data Entry Trigger Builder external module for <b>PID $project_id</b>. Please fix this as soon as possible, otherwise the DET will not run properly.</p><p><a href='" . $this->getUrl("form.php") . "'>Click to Navigate to Project EM Page</a></p><p>The last person to edit the DET was <b>" . $this->getProjectSetting("saved_by"). "</b></p>";
-                
-                $last_send_time = $this->get_last_send_time();
-                
-                if ($system_from_email && $system_contact_email && intval($last_send_time) >= intval($frequency))
-                {
-                    $email = new \Message();
-                    $email->setFrom($system_from_email);
-                    $email->setTo($system_contact_email);
-                    $email->setSubject($subject);
-                    $email->setBody($html_body, true);
-                    $email->send();
-                    
-                    $date_time = new DateTime();
-                    $this->setProjectSetting("email_last_sent_timestamp" , $date_time->format("Y-m-d H:i:s"));
-                }
-            }
-            
             // Get current record data
             $record_data = json_decode(REDCap::getData("json", $record, null, null, null, false, true), true);
             
@@ -975,6 +947,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                         
                         if (!empty($save_response["errors"]))
                         {
+                            $save_errors = true;
                             $this->log("DET Builder: Errors for Trigger #" . ($index + 1) . " Data not moved. Received the following: " . json_encode($save_response["errors"]));
                         }
                         
@@ -1016,6 +989,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                                 
                                 if (is_null($survey_url))
                                 {
+                                    $save_errors = true;
                                     $this->log("DET Builder: Errors for Trigger #" . ($index + 1) . "Survey url couldn't be generated. Please check your parameters for REDCap::getSurveyLink(). Project = $dest_project, Record = $dest_record, Instrument = $survey_url_instrument, Event ID = " . (is_null($survey_event_id) ? "null" : $survey_event_id));
                                 }
                                 else
@@ -1032,12 +1006,47 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                                     
                                     if (!empty($save_response["errors"]))
                                     {
+                                        $save_errors = true;
                                         $this->log("DET Builder: Errors for Trigger #" . ($index + 1) . ". Unable to save survey url to $save_url_field. Received the following: " . json_encode($save_response["errors"]));
                                     }
                                 }
                             }
                         }
                     }
+                }
+            }
+            
+            // Send email if errors are present in DET
+            $errors = $this->get_det_errors($triggers);
+            
+            if (!empty($errors) || $save_errors)
+            {
+                $system_from_email = $this->getSystemSetting("system-from-email");
+                $system_contact_email = $this->getSystemSetting("system-contact-email");
+                $frequency = $this->getSystemSetting("det-error-check-frequency");
+                
+                $frequency_hours = round(intval($frequency) / 60, 2);
+                
+                $subject = "Data Entry Trigger Builder Errors in Project $project_id";
+                $html_body = "<p>Errors have been detected in the Data Entry Trigger Builder external module for <b>PID $project_id</b>. Please fix them as soon as possible, otherwise the DET will not run properly.</p>
+                             <p><a href='" . $this->getUrl("form.php") . "'>Click to Navigate to Project EM Page</a></p>
+                             <p><a href='". ($_SERVER["HTTPS"] ? "https://" : "http://") . $_SERVER["HTTP_HOST"] . "/redcap/redcap_v" . REDCAP_VERSION . "/ExternalModules/manager/logs.php?pid=" . $project_id . "&modules=data_entry_trigger_builder_ubc'>Click to Navigate to Project EM Logging</a></p>
+                             <p>The last person to edit the DET was <b>" . $this->getProjectSetting("saved_by"). "</b></p>" .
+                             ($frequency_hours < 1 ? "<p>Error notifications for this project will be paused for " . $frequency . " minutes.</p>" : "<p>Error Notifications for this project will be paused for " . $frequency_hours . " hours.</p>");
+                
+                $last_sent_diff = $this->get_last_sent_diff();
+                
+                if ($system_from_email && $system_contact_email && intval($last_sent_diff) >= intval($frequency))
+                {
+                    $email = new \Message();
+                    $email->setFrom($system_from_email);
+                    $email->setTo($system_contact_email);
+                    $email->setSubject($subject);
+                    $email->setBody($html_body, true);
+                    $email->send();
+                    
+                    $date_time = new DateTime();
+                    $this->setProjectSetting("email_last_sent_timestamp" , $date_time->format("Y-m-d H:i:s"));
                 }
             }
         }
