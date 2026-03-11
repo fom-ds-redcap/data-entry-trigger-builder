@@ -1032,7 +1032,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                              <p><a href='" . $this->getUrl("form.php") . "'>Click to Navigate to Project EM Page</a></p>
                              <p><a href='". ($_SERVER["HTTPS"] ? "https://" : "http://") . $_SERVER["HTTP_HOST"] . "/redcap/redcap_v" . REDCAP_VERSION . "/ExternalModules/manager/logs.php?pid=" . $project_id . "&modules=data_entry_trigger_builder_ubc'>Click to Navigate to Project EM Logging</a></p>
                              <p>The last person to edit the DET was <b>" . $this->getProjectSetting("saved_by"). "</b></p>" .
-                             ($frequency_hours < 1 ? "<p>Error notifications for this project will be paused for " . $frequency . " minutes.</p>" : "<p>Error Notifications for this project will be paused for " . $frequency_hours . " hours.</p>");
+                             ($frequency_hours < 1 ? "<p>Error notifications for this project will be paused for " . $frequency . " minutes.</p>" : "<p>Error notifications for this project will be paused for " . $frequency_hours . " hours.</p>");
                 
                 $last_sent_diff = $this->get_last_sent_diff();
                 
