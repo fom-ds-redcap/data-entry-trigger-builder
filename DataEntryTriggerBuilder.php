@@ -11,6 +11,58 @@ use DateTime;
 
 class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
 {
+    private $project_metadata;
+    
+    private function retrieve_metadata($pid = null)
+    {
+        // Events
+        $RedcapProj = new Project($pid);
+        $events = array_values($RedcapProj->getUniqueEventNames());
+        
+        // Instruments
+        if ($pid != null) {
+            $data_dictionary = REDCap::getDataDictionary($pid, 'array');
+        }
+        else {
+            $data_dictionary = REDCap::getDataDictionary('array');
+        }
+        $instruments = array_unique(array_column($data_dictionary, "form_name"));
+        
+        // Fields
+        $fields = array_keys($data_dictionary);
+        
+        $external_fields = array();
+        $external_fields[] = "redcap_data_access_group";
+        foreach ($instruments as $unique_name)
+        {
+            $external_fields[] = "{$unique_name}_complete";
+        }
+        
+        $checkbox_values = array();
+        foreach($data_dictionary as $field_name => $data)
+        {
+            if ($data["field_type"] == "checkbox")
+            {
+                $choices = explode("|", $data["select_choices_or_calculations"]);
+                foreach($choices as $choice)
+                {
+                    $choice = trim($choice);
+                    $code = trim(substr($choice, 0, strpos($choice, ",")));
+                    $checkbox_values[] = "{$field_name}___{$code}";
+                }
+            }
+        }
+        
+        $fields = array_merge($fields, $external_fields, $checkbox_values);
+        
+        $key = is_null($pid) ? "source" : $pid;
+        $this->project_metadata[$key] = [
+            "events" => $events,
+            "instruments" => $instruments,
+            "fields" => $fields
+        ];
+    }
+    
     /**
      * Replaces all strings in $text with $replacement
      * So "Alice says 'hello'" becomes "Alice says ''" assuming $replacement = ''.
@@ -140,40 +192,8 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
     public function isValidField($var, $pid = null)
     {
         $var = trim($var, "'");
-        
-        if ($pid != null) {
-            $data_dictionary = REDCap::getDataDictionary($pid, 'array');
-        }
-        else {
-            $data_dictionary = REDCap::getDataDictionary('array');
-        }
-        
-        $fields = array_keys($data_dictionary);
-        
-        $external_fields = array();
-        $external_fields[] = "redcap_data_access_group";
-        $instruments = array_unique(array_column($data_dictionary, "form_name"));
-        foreach ($instruments as $unique_name)
-        {
-            $external_fields[] = "{$unique_name}_complete";
-        }
-        
-        $checkbox_values = array();
-        foreach($data_dictionary as $field_name => $data)
-        {
-            if ($data["field_type"] == "checkbox")
-            {
-                $choices = explode("|", $data["select_choices_or_calculations"]);
-                foreach($choices as $choice)
-                {
-                    $choice = trim($choice);
-                    $code = trim(substr($choice, 0, strpos($choice, ",")));
-                    $checkbox_values[] = "{$field_name}___{$code}";
-                }
-            }
-        }
-        
-        return in_array($var, $external_fields) || in_array($var, $fields)  || in_array($var, $checkbox_values);
+        $key = is_null($pid) ? "source" : $pid;
+        return in_array($var, $this->project_metadata[$key]["fields"]);
     }
     
     /**
@@ -186,9 +206,8 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
     public function isValidEvent($var, $pid = null)
     {
         $var = trim($var, "'");
-        $RedcapProj = new Project($pid);
-        $events = array_values($RedcapProj->getUniqueEventNames());
-        return in_array($var, $events);
+        $key = is_null($pid) ? "source" : $pid;
+        return in_array($var, $this->project_metadata[$key]["events"]);
     }
     
     /**
@@ -201,17 +220,8 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
     public function isValidInstrument($var, $pid = null)
     {
         $var = trim($var, "'");
-        
-        if ($pid != null) {
-            $data_dictionary = REDCap::getDataDictionary($pid, 'array');
-        }
-        else {
-            $data_dictionary = REDCap::getDataDictionary('array');
-        }
-        
-        $instruments = array_unique(array_column($data_dictionary, "form_name"));
-        
-        return in_array($var, $instruments);
+        $key = is_null($pid) ? "source" : $pid;
+        return in_array($var, $this->project_metadata[$key]["instruments"]);
     }
     
     /**
@@ -476,6 +486,9 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
     public function get_det_errors($triggers)
     {
         $errors = [];
+        
+        // Retrieve source project metadata
+        $this->retrieve_metadata();
 
         /**
          * Process each trigger, and check if variables all exist in the data dictionary
@@ -483,6 +496,8 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         foreach($triggers as $index => $trigger_obj)
         {
             $dest_project_pid = $trigger_obj["dest-project"];
+            
+            $this->retrieve_metadata($dest_project_pid);
 
             $err = $this->validateSyntax($trigger_obj["trigger"]);
             if (!empty($err))
