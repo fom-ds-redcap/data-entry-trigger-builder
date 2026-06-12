@@ -13,14 +13,8 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
 {
     private $project_metadata;
     
-    private function retrieveValidationMetadata($pid = null)
+    private function retrieveMetadata($pid = null)
     {
-        $key = is_null($pid) ? "source" : $pid;
-        
-        if ($this->project_metadata[$key]) {
-            return;
-        }
-        
         // Events
         $RedcapProj = new Project($pid);
         $events = array_values($RedcapProj->getUniqueEventNames());
@@ -35,7 +29,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         $instruments = array_unique(array_column($data_dictionary, "form_name"));
         
         // Fields
-        $fields = array_keys($data_dictionary);
+        $valid_fields = [];
         
         $external_fields = array();
         $external_fields[] = "redcap_data_access_group";
@@ -57,15 +51,29 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $checkbox_values[] = "{$field_name}___{$code}";
                 }
             }
+            
+            if ($data["field_type"] != "descriptive" && $data["field_type"] != "signature" && $data["field_type"] != "file")
+            {
+                $valid_fields[] = $field_name;
+            }
         }
         
-        $fields = array_merge($fields, $external_fields, $checkbox_values);
+        $fields = array_merge($valid_fields, $external_fields, $checkbox_values);
         
-        $this->project_metadata[$key] = [
+        return [
             "events" => $events,
             "instruments" => $instruments,
             "fields" => $fields
         ];
+    }
+    
+    private function retrieveValidationMetadata($pid = null)
+    {
+        $key = is_null($pid) ? "source" : $pid;
+        if ($this->project_metadata[$key]) {
+            return;
+        }
+        $this->project_metadata[$key] = $this->retrieveMetadata($pid);
     }
     
     /**
@@ -177,16 +185,16 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
     {
         $last_send_timestamp = $this->getProjectSetting("email_last_sent_timestamp");
         
-        if(is_null($last_send_timestamp)) 
-        { 
-            return $this->getSystemSetting("det-error-check-frequency"); 
+        if(is_null($last_send_timestamp))
+        {
+            return $this->getSystemSetting("det-error-check-frequency");
         }
         
         $date_time = new DateTime($last_send_timestamp);
         $diff = $date_time->diff(new DateTime());
         return $diff->i;
     }
-
+    
     /**
      * Checks whether a field exists within a project.
      *
@@ -426,55 +434,17 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
     {
         if (!empty($pid))
         {
-            $metadata = REDCap::getDataDictionary($pid, "array");
-            $instruments = array_values(array_unique(array_column($metadata, "form_name")));
+            $metadata = $this->retrieveMetadata($pid);
             $RedcapProj = new Project($pid);
-            $events = array_values($RedcapProj->getUniqueEventNames());
-            $isLongitudinal = $this->escape($RedcapProj->longitudinal);
-            
-            /**
-             * We can pipe over any data except descriptive, file, and signature fields.
-             *
-             * NOTE: For calculation fields only the raw data can be imported/exported.
-             */
-            foreach($metadata as $field_name => $data)
-            {
-                if ($data["field_type"] == "checkbox")
-                {
-                    $choices = explode("|", $data["select_choices_or_calculations"]);
-                    foreach($choices as $choice)
-                    {
-                        $choice = trim($choice);
-                        $code = trim(substr($choice, 0, strpos($choice, ",")));
-                        $fields[] = "{$field_name}___{$code}";
-                    }
-                    
-                }
-                if ($data["field_type"] != "descriptive" && $data["field_type"] != "signature" && $data["field_type"] != "file")
-                {
-                    $fields[] = $field_name;
-                }
-            }
-            
-            /**
-             * Add form completion status fields to push
-             */
-            foreach($instruments as $instrument)
-            {
-                $fields[] = $instrument . "_complete";
-            }
-            
-            // Add redcap_data_access_group to fields
-            $fields[] = "redcap_data_access_group";
-            
-            return ["fields" => $fields, "events" => $events, "isLongitudinal" => $isLongitudinal, "instruments" => $instruments];
+            $metadata["isLongitudinal"] = $this->escape($RedcapProj->longitudinal);
+            return $metadata;
         }
         return FALSE;
     }
-
+    
     /**
      * Retrieves a project's data access groups
-     * 
+     *
      * @param String $pid   A project's id in REDCap
      * @return Array       An array of unique Data Access Group names (based upon group name text) with group_id as array key and unique name as element
      */
@@ -487,14 +457,14 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         }
         return FALSE;
     }
-
+    
     public function get_det_errors($triggers)
     {
         $errors = [];
         
         // Retrieve source project metadata
         $this->retrieveValidationMetadata();
-
+        
         /**
          * Process each trigger, and check if variables all exist in the data dictionary
          */
@@ -503,33 +473,33 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
             $dest_project_pid = $trigger_obj["dest-project"];
             
             $this->retrieveValidationMetadata($dest_project_pid);
-
+            
             $err = $this->validateSyntax($trigger_obj["trigger"]);
             if (!empty($err))
             {
                 $errors[$index]["trigger_errors"] = $err;
             }
-
+            
             if (!empty($trigger_obj["linkSourceEvent"]) && !$this->isValidEvent($trigger_obj["linkSourceEvent"]))
             {
                 $errors[$index]["linkSourceEvent"] = "Invalid event!";
             }
-
+            
             if (!$this->isValidField($trigger_obj["linkSource"]))
             {
                 $errors[$index]["linkSource"] = "Invalid field!";
             }
-
-            if (!empty($trigger_obj["linkDestEvent"]) && !$this->isValidEvent($trigger_obj["linkDestEvent"], $dest_project_pid)) 
+            
+            if (!empty($trigger_obj["linkDestEvent"]) && !$this->isValidEvent($trigger_obj["linkDestEvent"], $dest_project_pid))
             {
                 $errors[$index]["linkDestEvent"] = "Invalid event!";
             }
-
-            if (!$this->isValidField($trigger_obj["linkDest"], $dest_project_pid)) 
+            
+            if (!$this->isValidField($trigger_obj["linkDest"], $dest_project_pid))
             {
                 $errors[$index]["linkDest"] = "Invalid field!";
             }
-
+            
             foreach($trigger_obj["pipingSourceEvents"] as $n => $field)
             {
                 if(!$this->isValidEvent($field))
@@ -537,7 +507,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $errors[$index]["pipingSourceEvents"][$n] = "$field is an invalid event!";
                 }
             }
-
+            
             foreach($trigger_obj["pipingSourceFields"] as $n => $field)
             {
                 if(!$this->isValidField($field))
@@ -545,7 +515,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $errors[$index]["pipingSourceFields"][$n] = "$field is an invalid field!";
                 }
             }
-
+            
             foreach($trigger_obj["pipingDestEvents"] as $n => $field)
             {
                 if(!$this->isValidEvent($field, $dest_project_pid))
@@ -553,7 +523,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $errors[$index]["pipingDestEvents"][$n] = "$field is an invalid event!";
                 }
             }
-
+            
             foreach($trigger_obj["pipingDestFields"] as $n => $field)
             {
                 if(!$this->isValidField($field, $dest_project_pid))
@@ -561,7 +531,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $errors[$index]["pipingDestFields"][$n] = "$field is an invalid field!";
                 }
             }
-
+            
             foreach($trigger_obj["setDestEvents"] as $n => $field)
             {
                 if(!$this->isValidEvent($field, $dest_project_pid))
@@ -569,7 +539,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $errors[$index]["setDestEvents"][$n] = "$field is an invalid event!";
                 }
             }
-
+            
             foreach($trigger_obj["setDestFields"] as $n => $field)
             {
                 if(!$this->isValidField($field, $dest_project_pid))
@@ -577,7 +547,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $errors[$index]["setDestFields"][$n] = "$field is an invalid field!";
                 }
             }
-
+            
             foreach($trigger_obj["sourceInstrEvents"] as $n => $field)
             {
                 if(!$this->isValidEvent($field))
@@ -585,7 +555,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $errors[$index]["sourceInstrEvents"][$n] = "$field is an invalid event!";
                 }
             }
-
+            
             foreach($trigger_obj["sourceInstr"] as $n => $field)
             {
                 if(!$this->isValidInstrument($field))
@@ -593,7 +563,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $errors[$index]["sourceInstr"][$n] = "$field is an invalid instrument!";
                 }
             }
-
+            
             foreach($trigger_obj["destInstrEvents"] as $n => $field)
             {
                 if(!$this->isValidEvent($field, $dest_project_pid))
@@ -601,28 +571,28 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $errors[$index]["destInstrEvents"][$n] = "$field is an invalid event!";
                 }
             }
-
+            
             if (!empty($trigger_obj["surveyUrlEvent"]) && !$this->isValidEvent($trigger_obj["surveyUrlEvent"], $dest_project_pid))
             {
                 $errors[$index]["surveyUrlEvent"] = "Invalid event!";
             }
-
+            
             if (!empty($trigger_obj["surveyUrl"]) && !$this->isValidInstrument($trigger_obj["surveyUrl"], $dest_project_pid))
             {
                 $errors[$index]["surveyUrl"] = "Invalid instrument!";
             }
-
-            if (!empty($trigger_obj["saveUrlEvent"]) && !$this->isValidEvent($trigger_obj["saveUrlEvent"])) 
+            
+            if (!empty($trigger_obj["saveUrlEvent"]) && !$this->isValidEvent($trigger_obj["saveUrlEvent"]))
             {
                 $errors[$index]["saveUrlEvent"] = "Invalid event!";
             }
-
-            if (!empty($trigger_obj["saveUrlField"]) && !$this->isValidField($trigger_obj["saveUrlField"])) 
+            
+            if (!empty($trigger_obj["saveUrlField"]) && !$this->isValidField($trigger_obj["saveUrlField"]))
             {
                 $errors[$index]["saveUrlField"] = "Invalid field!";
             }
         }
-
+        
         return $errors;
     }
     
@@ -636,14 +606,14 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         {
             // Get DET settings
             $settings_json = $this->getProjectSetting("det_settings");
-
+            
             if (!$settings_json || $settings_json == "null") {
                 return;
             }
-
+            
             $settings = json_decode($settings_json, true);
-
-            if ($settings) 
+            
+            if ($settings)
             {
                 if (array_key_exists("triggers", $settings)) {
                     $triggers = $settings["triggers"];
@@ -651,7 +621,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                 else {
                     $triggers = $settings;
                 }
-
+                
                 if (array_filter($triggers, 'is_array') !== $triggers) {
                     $this->log("DET Builder: Existing settings not in expected json format for module");
                     return;
@@ -680,7 +650,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $dest_record_data = [];
                     
                     $dest_project = $trigger_obj["dest-project"];
-
+                    
                     $dest_dags = $this->retrieveProjectGroups($dest_project);
                     
                     $overwrite_data = $trigger_obj["overwrite-data"];
@@ -733,7 +703,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                         }
                         
                         $source_field = $trigger_source_fields[$i];
-
+                        
                         if ($dest_field == "redcap_data_access_group") {
                             $unique_group_name = $dest_dags[$data[$source_field]];
                             $value = $unique_group_name;
@@ -741,7 +711,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                         else {
                             $value = $data[$source_field];
                         }
-
+                        
                         $event_data[$dest_field] = $value;
                         $dest_record_data[$dest_event] = $event_data;
                     }
@@ -780,7 +750,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                         else {
                             $value = $trigger_dest_values[$i];
                         }
-
+                        
                         $event_data[$dest_field] = $value;
                         $dest_record_data[$dest_event] = $event_data;
                     }
@@ -791,248 +761,248 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                     $trigger_source_instruments = $trigger_obj["sourceInstr"];
                     $trigger_source_instruments_events = $trigger_obj["sourceInstrEvents"];
                     $trigger_dest_instruments_events = $trigger_obj["destInstrEvents"];
-
+                    
                     $dest_dd = REDCap::getDataDictionary($dest_project, "array");
-
+                    
                     $dest_fields = array_keys($dest_dd);
-
+                    
                     // Add form completion statuses as fields to consider in the destination project
                     $dest_form_completion_fields = array_map(function($value) {
                         return $value . "_complete";
                     },
                     array_unique(array_column(array_values($dest_dd), "form_name")));
-
-                    $dest_fields = array_merge($dest_fields, $dest_form_completion_fields);
-                    
-                    foreach($trigger_source_instruments as $i => $source_instrument)
-                    {
-                        if (!empty($trigger_dest_instruments_events[$i]))
+                        
+                        $dest_fields = array_merge($dest_fields, $dest_form_completion_fields);
+                        
+                        foreach($trigger_source_instruments as $i => $source_instrument)
                         {
-                            $dest_event = $trigger_dest_instruments_events[$i];
-                        }
-                        else // Assume destination is classic project.
-                        {
-                            $dest_event = "classic";
+                            if (!empty($trigger_dest_instruments_events[$i]))
+                            {
+                                $dest_event = $trigger_dest_instruments_events[$i];
+                            }
+                            else // Assume destination is classic project.
+                            {
+                                $dest_event = "classic";
+                            }
+                            
+                            if (empty($dest_record_data[$dest_event]))
+                            {
+                                $event_data = [];
+                            }
+                            else
+                            {
+                                $event_data = $dest_record_data[$dest_event];
+                            }
+                            
+                            // Fields are returned in the order they are in the REDCap project
+                            $source_instrument_fields = REDCap::getFieldNames($source_instrument);
+                            
+                            // Add completion status to move with instrument
+                            $source_instrument_fields[] = $source_instrument . "_complete";
+                            
+                            // Check for fields that don't exist in the destination project, and remove them
+                            $source_instrument_fields = array_filter($source_instrument_fields, function($v, $k) use ($dest_fields) {
+                                return in_array($v, $dest_fields);
+                            }, ARRAY_FILTER_USE_BOTH);
+                                
+                                if (!empty($source_instrument_fields)) {
+                                    $source_event = !empty($trigger_source_instruments_events[$i]) ? $trigger_source_instruments_events[$i] : null;
+                                    $source_instrument_data = json_decode(REDCap::getData("json", $record, $source_instrument_fields, $source_event), true);
+                                }
+                                
+                                if (sizeof($source_instrument_data) > 0)
+                                {
+                                    // Remove any REDcap repeat instance fields, as module is currently incompatible
+                                    $source_instrument_data = $source_instrument_data[0];
+                                    unset($source_instrument_data["redcap_repeat_instrument"], $source_instrument_data["redcap_repeat_instance"]);
+                                    $event_data = $event_data + $source_instrument_data;
+                                    $dest_record_data[$dest_event] = $event_data;
+                                }
                         }
                         
-                        if (empty($dest_record_data[$dest_event]))
+                        if (!empty($dest_record_data) || $trigger_obj["create-empty-record"] == 1)
                         {
-                            $event_data = [];
-                        }
-                        else
-                        {
-                            $event_data = $dest_record_data[$dest_event];
-                        }
-                        
-                        // Fields are returned in the order they are in the REDCap project
-                        $source_instrument_fields = REDCap::getFieldNames($source_instrument);
-
-                        // Add completion status to move with instrument
-                        $source_instrument_fields[] = $source_instrument . "_complete";
-
-                        // Check for fields that don't exist in the destination project, and remove them
-                        $source_instrument_fields = array_filter($source_instrument_fields, function($v, $k) use ($dest_fields) {
-                            return in_array($v, $dest_fields);
-                        }, ARRAY_FILTER_USE_BOTH);
-
-                        if (!empty($source_instrument_fields)) {
-                            $source_event = !empty($trigger_source_instruments_events[$i]) ? $trigger_source_instruments_events[$i] : null;
-                            $source_instrument_data = json_decode(REDCap::getData("json", $record, $source_instrument_fields, $source_event), true);
-                        }
-                        
-                        if (sizeof($source_instrument_data) > 0)
-                        {
-                            // Remove any REDcap repeat instance fields, as module is currently incompatible
-                            $source_instrument_data = $source_instrument_data[0];
-                            unset($source_instrument_data["redcap_repeat_instrument"], $source_instrument_data["redcap_repeat_instance"]); 
-                            $event_data = $event_data + $source_instrument_data;
-                            $dest_record_data[$dest_event] = $event_data;
-                        }
-                    }
-                    
-                    if (!empty($dest_record_data) || $trigger_obj["create-empty-record"] == 1)
-                    {
-                        if (empty($dest_record_data))
-                        {
-                            if (empty($link_dest_event))
-                                $dest_record_data["classic"] = [];
+                            if (empty($dest_record_data))
+                            {
+                                if (empty($link_dest_event))
+                                    $dest_record_data["classic"] = [];
+                                    else
+                                        $dest_record_data[$link_dest_event] = [];
+                            }
+                            
+                            // Check if the linking id field is the same as the record id field.
+                            $dest_record_id = $this->framework->getRecordIdField($dest_project);
+                            if ($dest_record_id != $link_dest_field)
+                            {
+                                /**
+                                 * Check for existing record, otherwise create a new one. Assume linking ID is unique.
+                                 */
+                                
+                                // Search for the index of the linking id's event. If not found, then assume it's a classical project and that the index for the first event is 0.
+                                if (!empty($link_source_event))
+                                {
+                                    $key = array_search($link_source_event, array_column($record_data, "redcap_event_name"));
+                                }
                                 else
-                                    $dest_record_data[$link_dest_event] = [];
+                                {
+                                    $key = 0;
+                                }
+                                
+                                $data = $record_data[$key];
+                                $link_dest_value = $data[$link_source];
+                                
+                                if (!empty($trigger_obj["prefixPostfixStr"]))
+                                {
+                                    if ($trigger_obj["prefixOrPostfix"] == "post")
+                                        $link_dest_value .= $trigger_obj["prefixPostfixStr"];
+                                        else
+                                            $link_dest_value = $trigger_obj["prefixPostfixStr"] . $link_dest_value;
+                                }
+                                
+                                // Set linking id
+                                if (!empty($link_dest_event))
+                                {
+                                    $dest_record_data[$link_dest_event][$link_dest_field] = $link_dest_value;
+                                }
+                                else // Assume classic project
+                                {
+                                    $dest_record_data["classic"][$link_dest_field] = $link_dest_value;
+                                }
+                                
+                                // Retrieve record id. Exit if there is no value for the linking field, as it should be filled and never change.
+                                if (empty($link_dest_value))
+                                {
+                                    $this->log("DET Builder: Linking field value is empty, so no data moved. Filter logic: [$link_dest_field] = ''");
+                                    return;
+                                }
+                                else
+                                {
+                                    $filter_logic = "[$link_dest_field] = '$link_dest_value'";
+                                    $existing_record = REDCap::getData($dest_project, "json", null, $dest_record_id, $link_dest_event, null, false, false, false, $filter_logic);
+                                    $existing_record = json_decode($existing_record, true);
+                                    
+                                    if (sizeof($existing_record) == 0)
+                                    {
+                                        $dest_record = REDCap::reserveNewRecordId($dest_project);
+                                    }
+                                    else
+                                    {
+                                        $dest_record = $existing_record[0][$dest_record_id];
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                $dest_record = $record_data[0][$link_source];
+                                if (!empty($trigger_obj["prefixPostfixStr"]))
+                                {
+                                    if ($trigger_obj["prefixOrPostfix"] == "post")
+                                        $dest_record .= $trigger_obj["prefixPostfixStr"];
+                                        else
+                                            $dest_record = $trigger_obj["prefixPostfixStr"] . $dest_record;
+                                }
+                            }
+                            
+                            // Set redcap_event_name, record_id, and redcap_data_access_group if $import_dags is true
+                            foreach ($dest_record_data as $redcap_event_name => $data)
+                            {
+                                $dest_record_data[$redcap_event_name][$dest_record_id] = $dest_record;
+                                
+                                if ($redcap_event_name != "classic")
+                                {
+                                    $dest_record_data[$redcap_event_name]["redcap_event_name"] = $redcap_event_name;
+                                }
+                                
+                                if ($import_dags)
+                                {
+                                    $dest_record_data[$redcap_event_name]["redcap_data_access_group"] = $record_data[0]["redcap_data_access_group"];
+                                }
+                            }
+                            
+                            $dest_record_data = array_values($dest_record_data); // Don't need the keys to push, only the values.
                         }
                         
-                        // Check if the linking id field is the same as the record id field.
-                        $dest_record_id = $this->framework->getRecordIdField($dest_project);
-                        if ($dest_record_id != $link_dest_field)
+                        if (!empty($dest_record_data))
                         {
+                            global $Proj;
+                            $SourceProj = $Proj;
+                            
+                            // Save DET data in destination project;
+                            $save_response = REDCap::saveData($dest_project, "json", json_encode($dest_record_data), $overwrite_data);
+                            
+                            // HOTFIX: For issue where after saveData the global $Proj variable references the destination project context
+                            if ($Proj->project_id !== $project_id) {
+                                $Proj = $SourceProj;
+                            }
+                            
+                            if (!empty($save_response["errors"]))
+                            {
+                                $save_errors = true;
+                                $this->log("DET Builder: Errors for Trigger #" . ($index + 1) . " Data not moved. Received the following: " . json_encode($save_response["errors"]));
+                            }
+                            
+                            else if (!empty($save_response["warnings"]))
+                            {
+                                $this->log("DET Builder: Moved Data with Warnings for Trigger #" . ($index + 1) . ". Received the following: " . json_encode($save_response["warnings"]));
+                            }
+                            
+                            else
+                            {
+                                $this->log("DET Builder: Moved Data for Trigger #" . ($index + 1) . ". Created/modified the following records in PID $dest_project: " . implode(", ", array_unique($save_response["ids"])));
+                            }
+                            
                             /**
-                             * Check for existing record, otherwise create a new one. Assume linking ID is unique.
-                             */
+                             * If data was saved without errors then generate survey link and save it to the source project
+                             **/
                             
-                            // Search for the index of the linking id's event. If not found, then assume it's a classical project and that the index for the first event is 0.
-                            if (!empty($link_source_event))
+                            if (empty($save_response["errors"]))
                             {
-                                $key = array_search($link_source_event, array_column($record_data, "redcap_event_name"));
-                            }
-                            else
-                            {
-                                $key = 0;
-                            }
-                            
-                            $data = $record_data[$key];
-                            $link_dest_value = $data[$link_source];
-                            
-                            if (!empty($trigger_obj["prefixPostfixStr"]))
-                            {
-                                if ($trigger_obj["prefixOrPostfix"] == "post")
-                                    $link_dest_value .= $trigger_obj["prefixPostfixStr"];
+                                $survey_url_event = $trigger_obj["surveyUrlEvent"];
+                                $survey_url_instrument = $trigger_obj["surveyUrl"];
+                                $save_url_event = $trigger_obj["saveUrlEvent"];
+                                $save_url_field = $trigger_obj["saveUrlField"];
+                                
+                                if (!empty($survey_url_instrument) && !empty($save_url_field))
+                                {
+                                    if (!empty($survey_url_event))
+                                    {
+                                        $RedcapProj = new Project($dest_project);
+                                        $dest_events = $RedcapProj->getUniqueEventNames();
+                                        $survey_event_id = array_search($survey_url_event, $dest_events);
+                                    }
                                     else
-                                        $link_dest_value = $trigger_obj["prefixPostfixStr"] . $link_dest_value;
-                            }
-                            
-                            // Set linking id
-                            if (!empty($link_dest_event))
-                            {
-                                $dest_record_data[$link_dest_event][$link_dest_field] = $link_dest_value;
-                            }
-                            else // Assume classic project
-                            {
-                                $dest_record_data["classic"][$link_dest_field] = $link_dest_value;
-                            }
-                            
-                            // Retrieve record id. Exit if there is no value for the linking field, as it should be filled and never change.
-                            if (empty($link_dest_value))
-                            {
-                                $this->log("DET Builder: Linking field value is empty, so no data moved. Filter logic: [$link_dest_field] = ''");
-                                return;
-                            }
-                            else
-                            {
-                                $filter_logic = "[$link_dest_field] = '$link_dest_value'";
-                                $existing_record = REDCap::getData($dest_project, "json", null, $dest_record_id, $link_dest_event, null, false, false, false, $filter_logic);
-                                $existing_record = json_decode($existing_record, true);
-                                
-                                if (sizeof($existing_record) == 0)
-                                {
-                                    $dest_record = REDCap::reserveNewRecordId($dest_project);
-                                }
-                                else
-                                {
-                                    $dest_record = $existing_record[0][$dest_record_id];
-                                }
-                            }
-                        }
-                        else
-                        {
-                            $dest_record = $record_data[0][$link_source];
-                            if (!empty($trigger_obj["prefixPostfixStr"]))
-                            {
-                                if ($trigger_obj["prefixOrPostfix"] == "post")
-                                    $dest_record .= $trigger_obj["prefixPostfixStr"];
-                                    else
-                                        $dest_record = $trigger_obj["prefixPostfixStr"] . $dest_record;
-                            }
-                        }
-                        
-                        // Set redcap_event_name, record_id, and redcap_data_access_group if $import_dags is true
-                        foreach ($dest_record_data as $redcap_event_name => $data)
-                        {
-                            $dest_record_data[$redcap_event_name][$dest_record_id] = $dest_record;
-                            
-                            if ($redcap_event_name != "classic")
-                            {
-                                $dest_record_data[$redcap_event_name]["redcap_event_name"] = $redcap_event_name;
-                            }
-                            
-                            if ($import_dags)
-                            {
-                                $dest_record_data[$redcap_event_name]["redcap_data_access_group"] = $record_data[0]["redcap_data_access_group"];
-                            }
-                        }
-                        
-                        $dest_record_data = array_values($dest_record_data); // Don't need the keys to push, only the values.
-                    }
-                    
-                    if (!empty($dest_record_data))
-                    {
-                        global $Proj;
-                        $SourceProj = $Proj;
-                        
-                        // Save DET data in destination project;
-                        $save_response = REDCap::saveData($dest_project, "json", json_encode($dest_record_data), $overwrite_data);
-                        
-                        // HOTFIX: For issue where after saveData the global $Proj variable references the destination project context
-                        if ($Proj->project_id !== $project_id) {
-                            $Proj = $SourceProj;
-                        }
-                        
-                        if (!empty($save_response["errors"]))
-                        {
-                            $save_errors = true;
-                            $this->log("DET Builder: Errors for Trigger #" . ($index + 1) . " Data not moved. Received the following: " . json_encode($save_response["errors"]));
-                        }
-                        
-                        else if (!empty($save_response["warnings"]))
-                        {
-                            $this->log("DET Builder: Moved Data with Warnings for Trigger #" . ($index + 1) . ". Received the following: " . json_encode($save_response["warnings"]));
-                        }
-                        
-                        else
-                        {
-                            $this->log("DET Builder: Moved Data for Trigger #" . ($index + 1) . ". Created/modified the following records in PID $dest_project: " . implode(", ", array_unique($save_response["ids"])));
-                        }
-                        
-                        /**
-                         * If data was saved without errors then generate survey link and save it to the source project
-                         **/
-                        
-                        if (empty($save_response["errors"]))
-                        {
-                            $survey_url_event = $trigger_obj["surveyUrlEvent"];
-                            $survey_url_instrument = $trigger_obj["surveyUrl"];
-                            $save_url_event = $trigger_obj["saveUrlEvent"];
-                            $save_url_field = $trigger_obj["saveUrlField"];
-                            
-                            if (!empty($survey_url_instrument) && !empty($save_url_field))
-                            {
-                                if (!empty($survey_url_event))
-                                {
-                                    $RedcapProj = new Project($dest_project);
-                                    $dest_events = $RedcapProj->getUniqueEventNames();
-                                    $survey_event_id = array_search($survey_url_event, $dest_events);
-                                }
-                                else
-                                {
-                                    $survey_event_id = null;
-                                }
-                                
-                                $survey_url = REDCap::getSurveyLink($dest_record, $survey_url_instrument, $survey_event_id, 1, $dest_project);
-                                
-                                if (is_null($survey_url))
-                                {
-                                    $save_errors = true;
-                                    $this->log("DET Builder: Errors for Trigger #" . ($index + 1) . "Survey url couldn't be generated. Please check your parameters for REDCap::getSurveyLink(). Project = $dest_project, Record = $dest_record, Instrument = $survey_url_instrument, Event ID = " . (is_null($survey_event_id) ? "null" : $survey_event_id));
-                                }
-                                else
-                                {
-                                    $record_id_field = REDCap::getRecordIdField();
+                                    {
+                                        $survey_event_id = null;
+                                    }
                                     
-                                    $save_url_data = [
-                                        $record_id_field => $record,
-                                        $save_url_field => $survey_url,
-                                        "redcap_event_name" => empty($save_url_event) ? "" : $save_url_event
-                                    ];
+                                    $survey_url = REDCap::getSurveyLink($dest_record, $survey_url_instrument, $survey_event_id, 1, $dest_project);
                                     
-                                    $save_response = REDCap::saveData($project_id, "json", json_encode(array($save_url_data)));
-                                    
-                                    if (!empty($save_response["errors"]))
+                                    if (is_null($survey_url))
                                     {
                                         $save_errors = true;
-                                        $this->log("DET Builder: Errors for Trigger #" . ($index + 1) . ". Unable to save survey url to $save_url_field. Received the following: " . json_encode($save_response["errors"]));
+                                        $this->log("DET Builder: Errors for Trigger #" . ($index + 1) . "Survey url couldn't be generated. Please check your parameters for REDCap::getSurveyLink(). Project = $dest_project, Record = $dest_record, Instrument = $survey_url_instrument, Event ID = " . (is_null($survey_event_id) ? "null" : $survey_event_id));
+                                    }
+                                    else
+                                    {
+                                        $record_id_field = REDCap::getRecordIdField();
+                                        
+                                        $save_url_data = [
+                                            $record_id_field => $record,
+                                            $save_url_field => $survey_url,
+                                            "redcap_event_name" => empty($save_url_event) ? "" : $save_url_event
+                                        ];
+                                        
+                                        $save_response = REDCap::saveData($project_id, "json", json_encode(array($save_url_data)));
+                                        
+                                        if (!empty($save_response["errors"]))
+                                        {
+                                            $save_errors = true;
+                                            $this->log("DET Builder: Errors for Trigger #" . ($index + 1) . ". Unable to save survey url to $save_url_field. Received the following: " . json_encode($save_response["errors"]));
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
                 }
             }
             
@@ -1053,21 +1023,21 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
                              <p><a href='". ($_SERVER["HTTPS"] ? "https://" : "http://") . $_SERVER["HTTP_HOST"] . "/redcap/redcap_v" . REDCAP_VERSION . "/ExternalModules/manager/logs.php?pid=" . $project_id . "&modules=data_entry_trigger_builder_ubc'>Click to Navigate to Project EM Logging</a></p>
                              <p>The last person to edit the DET was <b>" . $this->getProjectSetting("saved_by"). "</b></p>" .
                              ($frequency_hours < 1 ? "<p>Error notifications for this project will be paused for " . $frequency . " minutes.</p>" : "<p>Error notifications for this project will be paused for " . $frequency_hours . " hours.</p>");
-                
-                $last_sent_diff = $this->get_last_sent_diff();
-                
-                if ($system_from_email && $system_contact_email && intval($last_sent_diff) >= intval($frequency))
-                {
-                    $email = new \Message();
-                    $email->setFrom($system_from_email);
-                    $email->setTo($system_contact_email);
-                    $email->setSubject($subject);
-                    $email->setBody($html_body, true);
-                    $email->send();
-                    
-                    $date_time = new DateTime();
-                    $this->setProjectSetting("email_last_sent_timestamp" , $date_time->format("Y-m-d H:i:s"));
-                }
+                             
+                             $last_sent_diff = $this->get_last_sent_diff();
+                             
+                             if ($system_from_email && $system_contact_email && intval($last_sent_diff) >= intval($frequency))
+                             {
+                                 $email = new \Message();
+                                 $email->setFrom($system_from_email);
+                                 $email->setTo($system_contact_email);
+                                 $email->setSubject($subject);
+                                 $email->setBody($html_body, true);
+                                 $email->send();
+                                 
+                                 $date_time = new DateTime();
+                                 $this->setProjectSetting("email_last_sent_timestamp" , $date_time->format("Y-m-d H:i:s"));
+                             }
             }
         }
     }
