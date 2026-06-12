@@ -15,6 +15,12 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
     
     private function retrieve_metadata($pid = null)
     {
+        $key = is_null($pid) ? "source" : $pid;
+        
+        if ($this->project_metadata[$key]) {
+            return;
+        }
+        
         // Events
         $RedcapProj = new Project($pid);
         $events = array_values($RedcapProj->getUniqueEventNames());
@@ -55,7 +61,6 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         
         $fields = array_merge($fields, $external_fields, $checkbox_values);
         
-        $key = is_null($pid) ? "source" : $pid;
         $this->project_metadata[$key] = [
             "events" => $events,
             "instruments" => $instruments,
