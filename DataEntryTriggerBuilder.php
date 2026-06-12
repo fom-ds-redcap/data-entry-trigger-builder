@@ -13,7 +13,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
 {
     private $project_metadata;
     
-    private function retrieve_metadata($pid = null)
+    private function retrieveValidationMetadata($pid = null)
     {
         $key = is_null($pid) ? "source" : $pid;
         
@@ -494,6 +494,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         
         // Retrieve source project metadata
         $this->retrieve_metadata();
+        $this->retrieveValidationMetadata();
 
         /**
          * Process each trigger, and check if variables all exist in the data dictionary
@@ -502,7 +503,7 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         {
             $dest_project_pid = $trigger_obj["dest-project"];
             
-            $this->retrieve_metadata($dest_project_pid);
+            $this->retrieveValidationMetadata($dest_project_pid);
 
             $err = $this->validateSyntax($trigger_obj["trigger"]);
             if (!empty($err))
