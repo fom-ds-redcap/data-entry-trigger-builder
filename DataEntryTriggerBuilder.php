@@ -493,7 +493,6 @@ class DataEntryTriggerBuilder extends \ExternalModules\AbstractExternalModule
         $errors = [];
         
         // Retrieve source project metadata
-        $this->retrieve_metadata();
         $this->retrieveValidationMetadata();
 
         /**
